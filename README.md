@@ -489,9 +489,10 @@ Caddy templates for the two Cloudflare paths are in `caddy/`:
 
 Cloudflare currently has only Universal SSL (`jawara.cloud` and
 `*.jawara.cloud`). A forced TLS handshake for `whoami.cluster.jawara.cloud`
-fails at the edge with alert 40; `*.cluster` is a second-level wildcard. Enable
-Advanced Certificate Manager/Total TLS, or use a single-level hostname. The new
-wildcard record is also not visible at the authoritative nameservers yet.
+fails at the edge with alert 40; `*.cluster` is a second-level wildcard. The
+wildcard DNS record is now live; the remaining blocker is the Cloudflare edge
+certificate. Enable Advanced Certificate Manager/Total TLS, or use a
+single-level hostname.
 
 The full design, DNS, TLS, and privacy notes are in
 [docs/cloudflare-wildcard.md](docs/cloudflare-wildcard.md).

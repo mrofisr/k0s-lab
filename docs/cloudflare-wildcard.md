@@ -10,8 +10,9 @@ Istio ingress, without exposing the cluster API or NodePorts to the internet.
 | k0s node | `10.0.0.81` (RFC1918) |
 | Public origin | `158.178.238.132` |
 | `jawara.cloud` DNS | Cloudflare nameservers |
-| `*.cluster.jawara.cloud` | not visible at the authoritative NS yet |
+| `*.cluster.jawara.cloud` | live at Cloudflare, proxied to the origin |
 | Cloudflare edge certificate | `jawara.cloud`, `*.jawara.cloud` only |
+| Local Oracle VCN resolver | `169.254.169.254`; caches negative answers |
 | Caddy | active on `*:80` and `*:443` |
 | k0s API `6443` from public IP | closed |
 | NodePorts `30080`/`30443` from public IP | closed |
@@ -44,8 +45,9 @@ This means a proxied `*.cluster.jawara.cloud` record cannot serve HTTPS clients
 until Cloudflare has an edge certificate for the second-level wildcard. An
 Origin CA certificate at Caddy does not fix the client-facing handshake.
 
-The wildcard record is also not visible at the authoritative nameservers yet.
-In the `jawara.cloud` zone the record must be:
+The wildcard record is now live at Cloudflare and resolves to the proxy IPs
+from the authoritative nameservers. The remaining blocker is the edge
+certificate. The record shape in the `jawara.cloud` zone is:
 
 ```text
 Type: A
@@ -57,6 +59,11 @@ Proxy: Proxied
 Entering the full `*.cluster.jawara.cloud` as the record name in the
 `jawara.cloud` zone creates the wrong name. A separate `cluster.jawara.cloud`
 zone would need NS delegation from `jawara.cloud`.
+
+The host's `systemd-resolved` uses the Oracle VCN resolver
+`169.254.169.254`, which can keep the old NXDOMAIN answer for a while. Verify
+DNS with `dig @1.1.1.1 whoami.cluster.jawara.cloud`; a "could not resolve"
+error on the host is a cache issue, not a Cloudflare failure.
 
 ### Options
 
