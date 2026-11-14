@@ -10,7 +10,8 @@ Istio ingress, without exposing the cluster API or NodePorts to the internet.
 | k0s node | `10.0.0.81` (RFC1918) |
 | Public origin | `158.178.238.132` |
 | `jawara.cloud` DNS | Cloudflare nameservers |
-| `cluster.jawara.cloud` | no DNS record yet |
+| `*.cluster.jawara.cloud` | not visible at the authoritative NS yet |
+| Cloudflare edge certificate | `jawara.cloud`, `*.jawara.cloud` only |
 | Caddy | active on `*:80` and `*:443` |
 | k0s API `6443` from public IP | closed |
 | NodePorts `30080`/`30443` from public IP | closed |
@@ -20,6 +21,61 @@ Istio ingress, without exposing the cluster API or NodePorts to the internet.
 The public-origin checks above used the host's public IP. Only Caddy `80`/`443`
 answered. The k0s API is additionally rejected by the host INPUT chain, and the
 Cilium NodePorts are reachable on the LAN but not from the public IP.
+
+## Critical Cloudflare edge certificate limit
+
+Cloudflare's current Universal SSL certificate for this zone contains:
+
+```text
+DNS:jawara.cloud
+DNS:*.jawara.cloud
+```
+
+`*.jawara.cloud` matches one label. It does **not** match
+`whoami.cluster.jawara.cloud`. A forced TLS handshake to the Cloudflare edge
+with that SNI fails:
+
+```text
+sslv3 alert handshake failure
+SSL alert number 40
+```
+
+This means a proxied `*.cluster.jawara.cloud` record cannot serve HTTPS clients
+until Cloudflare has an edge certificate for the second-level wildcard. An
+Origin CA certificate at Caddy does not fix the client-facing handshake.
+
+The wildcard record is also not visible at the authoritative nameservers yet.
+In the `jawara.cloud` zone the record must be:
+
+```text
+Type: A
+Name: *.cluster          # dashboard shows *.cluster.jawara.cloud
+Content: 158.178.238.132
+Proxy: Proxied
+```
+
+Entering the full `*.cluster.jawara.cloud` as the record name in the
+`jawara.cloud` zone creates the wrong name. A separate `cluster.jawara.cloud`
+zone would need NS delegation from `jawara.cloud`.
+
+### Options
+
+1. **Advanced Certificate Manager / Total TLS.** Enable an edge certificate
+   for `*.cluster.jawara.cloud` and `cluster.jawara.cloud`. This is the cleanest
+   way to keep Cloudflare proxied. Availability depends on the Cloudflare plan.
+2. **Single-level hostname.** Use a name Universal SSL already covers, such as
+   `cluster.jawara.cloud` with path-based routing, or
+   `whoami-cluster.jawara.cloud`. No ACM needed.
+3. **DNS-only + origin wildcard certificate.** Set `*.cluster` to DNS-only and
+   terminate TLS at Caddy with a publicly trusted wildcard certificate for
+   `*.cluster.jawara.cloud` (ACME DNS-01 with a Cloudflare API token, or a
+   custom Caddy build with the Cloudflare DNS plugin). This bypasses the edge
+   certificate but exposes the origin IP and loses Cloudflare proxy protection.
+4. **Cloudflare for SaaS / custom hostname certificate.** Use a custom hostname
+   and certificate for `*.cluster.jawara.cloud`; typically a paid feature.
+
+A Cloudflare Tunnel does **not** bypass this limit: the public hostname still
+needs a Cloudflare edge certificate.
 
 ## Traffic shape
 
@@ -63,10 +119,14 @@ Options for nested names:
 - Keep one label per tenant: `<tenant>.cluster.jawara.cloud`.
 - Put the tenant in the path instead of the hostname.
 
-## Path A: Cloudflare Tunnel (recommended)
+## Path A: Cloudflare Tunnel
 
 Cloudflare terminates TLS and `cloudflared` connects to Caddy on localhost. The
 origin needs no Origin CA certificate and no public NodePort.
+
+This still requires a Cloudflare edge certificate for
+`*.cluster.jawara.cloud`; the tunnel avoids origin exposure but not the edge
+certificate limit. Enable Total TLS/ACM first if you use this path.
 
 1. Install and authenticate `cloudflared`.
 2. Create a tunnel and route the wildcard DNS name:
@@ -97,7 +157,9 @@ tunnel, and the Caddy site accepts only `127.0.0.1`/`::1`.
 ## Path B: Proxied DNS + Origin CA
 
 Cloudflare proxies the wildcard to the origin and validates a Cloudflare Origin
-CA certificate.
+CA certificate. This requires an edge certificate for
+`*.cluster.jawara.cloud`; without ACM/Total TLS the client-facing handshake
+fails before Caddy is reached.
 
 1. Add the proxied record:
 
@@ -122,6 +184,19 @@ The template allows only Cloudflare edge IP ranges to use the site. Direct
 requests to the origin's `80`/`443` receive `403`. For defense in depth, also
 restrict the cloud security list to Cloudflare ranges, or only allow `80`/`443`
 from Cloudflare.
+
+## Path C: Single-level hostname fallback
+
+If you do not have ACM/Total TLS, use a name Universal SSL already covers:
+
+```text
+cluster.jawara.cloud
+whoami-cluster.jawara.cloud
+```
+
+`cluster.jawara.cloud` is matched by `*.jawara.cloud`. Use it as one entry point
+and route by path in Istio, or use one single-label hostname per app. This
+avoids the second-level wildcard certificate problem entirely.
 
 ## Why not on-demand TLS?
 

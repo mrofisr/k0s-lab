@@ -3,6 +3,12 @@
 These are templates. The live Caddy configuration was deliberately **not**
 changed. Install exactly one of them after choosing the Cloudflare path.
 
+Cloudflare's current Universal SSL certificate covers `jawara.cloud` and
+`*.jawara.cloud` only. A proxied `*.cluster.jawara.cloud` hostname needs an edge
+certificate from Advanced Certificate Manager/Total TLS (or a custom
+certificate) before either template can serve clients. See
+`docs/cloudflare-wildcard.md` for the alternatives.
+
 Both templates proxy to the k0s Istio ingress NodePort
 `10.0.0.81:30080` and preserve the original `Host` header. The matching Istio
 Gateway/VirtualService is `istio/cluster-wildcard.yaml`.

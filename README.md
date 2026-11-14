@@ -481,9 +481,17 @@ curl -sS -H 'Host: whoami.cluster.jawara.cloud' http://10.0.0.81:30080/
 Caddy templates for the two Cloudflare paths are in `caddy/`:
 
 - **Cloudflare Tunnel** — Cloudflare terminates TLS and `cloudflared` connects
-  to Caddy on localhost. Most private; no Origin CA certificate.
+  to Caddy on localhost. Most private; no Origin CA certificate. The edge
+  certificate requirement below still applies.
 - **Proxied DNS + Origin CA** — `*.cluster` A record proxied to the origin,
-  Cloudflare Full (strict), Caddy allows only Cloudflare edge IPs.
+  Cloudflare Full (strict), Caddy allows only Cloudflare edge IPs. Requires a
+  second-level edge certificate.
+
+Cloudflare currently has only Universal SSL (`jawara.cloud` and
+`*.jawara.cloud`). A forced TLS handshake for `whoami.cluster.jawara.cloud`
+fails at the edge with alert 40; `*.cluster` is a second-level wildcard. Enable
+Advanced Certificate Manager/Total TLS, or use a single-level hostname. The new
+wildcard record is also not visible at the authoritative nameservers yet.
 
 The full design, DNS, TLS, and privacy notes are in
 [docs/cloudflare-wildcard.md](docs/cloudflare-wildcard.md).
