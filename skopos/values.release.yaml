@@ -1,0 +1,6 @@
+gateway:
+  enabled: true
+  image:
+    repository: ghcr.io/mrofisr/skopos-gateway
+    tag: "0.0.1-alpha"
+    digest: "sha256:d516587cb9f2b97d4599f6c8f9da1ae97be2575fbd76b9bfde710ae9aec5c709"

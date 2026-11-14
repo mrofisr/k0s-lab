@@ -9,6 +9,7 @@ layers one at a time:
 - **metrics-server** from k0s, verified with `kubectl top`.
 - **cert-manager** with a private CA and a `demo.local` certificate.
 - **Istio** in ambient mode, exposed on NodePorts `30080`/`30443`.
+- **Skopos** `v0.0.1-alpha`, installed in `observability` on local-path storage.
 
 Caddy keeps host ports `80` and `443`. Nothing in this lab binds those ports.
 
@@ -22,6 +23,7 @@ Caddy keeps host ports `80` and `443`. Nothing in this lab binds those ports.
 | metrics-server | `v0.9.0-k0s.2` | Built into k0s |
 | cert-manager | `v1.21.3` | Self-signed bootstrap Issuer → private CA |
 | Istio | `1.32.0` | Ambient profile, ztunnel, NodePort ingress |
+| Skopos | `0.0.1-alpha` | Gateway, ClickHouse, collector, OBI |
 | Demo app | `traefik/whoami:v1.11.0` | Prints request headers and peer metadata |
 
 The versions are pinned deliberately. Cilium 1.20 is tested through Kubernetes
@@ -65,9 +67,14 @@ k0s-lab/
 ├── apps/whoami.yaml                   # demo Deployment + Service
 ├── docs/phase2-kube-proxy.md          # KPR migration + rollback
 ├── docs/phase2-ambient.md             # ambient migration + rollback
+├── docs/skopos-on-k0s.md              # Skopos install + OBI findings
+├── skopos/
+│   ├── values.release.yaml            # pinned gateway digest
+│   └── values.k0s.yaml                # local-path storage overlay
 ├── scripts/
 │   ├── env.sh                         # PATH + KUBECONFIG for a new shell
-│   ├── install.sh                     # idempotent end-to-end bootstrap
+│   ├── install.sh                     # idempotent lab bootstrap
+│   ├── install-skopos.sh              # Skopos + local-path install
 │   ├── teardown.sh                    # removes the lab
 │   └── firewall.sh                    # allows pod CIDR → host services
 ├── systemd/k0s-lab-firewall.service   # runs firewall.sh at boot
@@ -431,6 +438,30 @@ kubectl delete -f cert-manager/demo-certificate.yaml
 kubectl delete -f apps/whoami.yaml
 kubectl delete -f istio/demo-namespace.yaml
 ```
+
+## Skopos on k0s
+
+The published `v0.0.1-alpha` chart runs in the `observability` namespace:
+
+```sh
+./scripts/install-skopos.sh
+```
+
+The script installs the local-path provisioner if needed, applies the pinned
+release values, and waits for the data plane. Do not add `--wait` to the Helm
+command: the ClickHouse schema and gateway user are created by a post-install
+hook, while the gateway readiness probe depends on them; `--wait` deadlocks.
+
+Verify:
+
+```sh
+kubectl -n observability port-forward svc/skopos-gateway 8080:8080
+curl -sS http://127.0.0.1:8080/readyz
+curl -sS 'http://127.0.0.1:8080/api/v1/query?query=target_info'
+```
+
+See [docs/skopos-on-k0s.md](docs/skopos-on-k0s.md) for the install, the OBI
+capability findings, the k3d comparison, and uninstall.
 
 ## Phase 2 progress
 

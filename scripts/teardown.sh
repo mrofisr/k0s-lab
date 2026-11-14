@@ -15,6 +15,11 @@ if [[ "${1:-}" != "--yes" ]]; then
 fi
 
 if timeout 10 kubectl cluster-info >/dev/null 2>&1; then
+  echo "==> Skopos"
+  helm uninstall skopos -n observability || true
+  kubectl -n observability delete pvc --all --ignore-not-found || true
+  kubectl delete namespace observability --ignore-not-found || true
+
   echo "==> Demo"
   kubectl delete -f "$LAB_DIR/istio/virtualservice.yaml" --ignore-not-found || true
   kubectl delete -f "$LAB_DIR/istio/gateway.yaml" --ignore-not-found || true
@@ -32,6 +37,11 @@ if timeout 10 kubectl cluster-info >/dev/null 2>&1; then
 
   echo "==> Cilium"
   helm uninstall cilium -n kube-system || true
+
+  echo "==> local-path"
+  kubectl delete namespace local-path-storage --ignore-not-found || true
+  kubectl delete storageclass local-path --ignore-not-found || true
+  echo "Local-path data under /opt/local-path-provisioner was left in place."
 else
   echo "==> Cluster is not reachable; skipping in-cluster cleanup"
 fi

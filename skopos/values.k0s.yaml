@@ -1,0 +1,11 @@
+# k0s lab overlay for the published Skopos chart.
+# The k0s cluster has no built-in StorageClass, so pin both PVCs to the
+# Rancher local-path provisioner installed for this lab.
+clickhouse:
+  persistence:
+    storageClass: local-path
+
+collector:
+  sendingQueue:
+    persistence:
+      storageClass: local-path
