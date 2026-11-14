@@ -1,0 +1,24 @@
+# Cloudflare Tunnel -> Caddy -> Istio
+#
+# cloudflared connects to Caddy on localhost:80. Only the local tunnel can use
+# this site; direct requests to the origin's public port 80 get 403.
+#
+# Install as /etc/caddy/sites/cluster-wildcard.caddy, then:
+#   sudo caddy validate --config /etc/caddy/Caddyfile
+#   sudo systemctl reload caddy
+
+http://*.cluster.jawara.cloud {
+	@tunnel remote_ip 127.0.0.1 ::1
+
+	handle @tunnel {
+		reverse_proxy 10.0.0.81:30080 {
+			header_up Host {host}
+			header_up X-Real-IP {http.request.header.CF-Connecting-IP}
+			header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+			header_up X-Forwarded-Proto https
+		}
+		header -Server
+	}
+
+	respond "Forbidden" 403
+}

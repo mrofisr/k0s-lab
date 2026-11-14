@@ -1,0 +1,35 @@
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: cluster-wildcard
+  namespace: demo
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - "*.cluster.jawara.cloud"
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: cluster-wildcard
+  namespace: demo
+spec:
+  hosts:
+    - "*.cluster.jawara.cloud"
+  gateways:
+    - cluster-wildcard
+  http:
+    - match:
+        - uri:
+            prefix: /
+      route:
+        - destination:
+            host: whoami.demo.svc.cluster.local
+            port:
+              number: 80

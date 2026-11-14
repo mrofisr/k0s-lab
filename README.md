@@ -63,11 +63,17 @@ k0s-lab/
 │   ├── demo-namespace.yaml            # ambient data plane
 │   ├── gateway.yaml                   # HTTP + HTTPS gateways
 │   ├── virtualservice.yaml            # redirect + whoami route
+│   ├── cluster-wildcard.yaml          # *.cluster.jawara.cloud -> whoami
 │   └── peer-authentication.yaml       # STRICT mTLS in demo
+├── caddy/
+│   ├── cluster-wildcard-tunnel.caddy  # tunnel template
+│   ├── cluster-wildcard-origin-ca.caddy
+│   └── README.md
 ├── apps/whoami.yaml                   # demo Deployment + Service
 ├── docs/phase2-kube-proxy.md          # KPR migration + rollback
 ├── docs/phase2-ambient.md             # ambient migration + rollback
 ├── docs/skopos-on-k0s.md              # Skopos install + OBI findings
+├── docs/cloudflare-wildcard.md        # Cloudflare -> Caddy -> Istio
 ├── skopos/
 │   ├── values.release.yaml            # pinned gateway digest
 │   └── values.k0s.yaml                # local-path storage overlay
@@ -462,6 +468,30 @@ curl -sS 'http://127.0.0.1:8080/api/v1/query?query=target_info'
 
 See [docs/skopos-on-k0s.md](docs/skopos-on-k0s.md) for the install, the OBI
 capability findings, the k3d comparison, and uninstall.
+
+## Cloudflare wildcard
+
+The Istio side is live: `*.cluster.jawara.cloud` routes to whoami through the
+private ingress gateway. It is testable without DNS:
+
+```sh
+curl -sS -H 'Host: whoami.cluster.jawara.cloud' http://10.0.0.81:30080/
+```
+
+Caddy templates for the two Cloudflare paths are in `caddy/`:
+
+- **Cloudflare Tunnel** — Cloudflare terminates TLS and `cloudflared` connects
+  to Caddy on localhost. Most private; no Origin CA certificate.
+- **Proxied DNS + Origin CA** — `*.cluster` A record proxied to the origin,
+  Cloudflare Full (strict), Caddy allows only Cloudflare edge IPs.
+
+The full design, DNS, TLS, and privacy notes are in
+[docs/cloudflare-wildcard.md](docs/cloudflare-wildcard.md).
+
+The cluster API `6443` and NodePorts `30080`/`30443` are not reachable from the
+public IP; Caddy `80`/`443` is the only public edge. A DNS wildcard covers one
+label only: `whoami.cluster.jawara.cloud` matches, `a.b.cluster.jawara.cloud`
+does not.
 
 ## Phase 2 progress
 

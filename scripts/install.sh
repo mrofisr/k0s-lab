@@ -146,6 +146,7 @@ kubectl -n istio-system wait --for=condition=Ready certificate/demo-local --time
 
 kubectl apply -f "$LAB_DIR/istio/gateway.yaml"
 kubectl apply -f "$LAB_DIR/istio/virtualservice.yaml"
+kubectl apply -f "$LAB_DIR/istio/cluster-wildcard.yaml"
 kubectl apply -f "$LAB_DIR/istio/peer-authentication.yaml"
 kubectl -n demo rollout restart deploy/whoami
 kubectl -n demo rollout status deploy/whoami --timeout=300s
