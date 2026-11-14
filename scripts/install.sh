@@ -120,17 +120,26 @@ kubectl -n cert-manager wait --for=condition=Ready certificate/lab-ca --timeout=
 kubectl apply -f "$LAB_DIR/cert-manager/ca-clusterissuer.yaml"
 kubectl wait --for=condition=Ready clusterissuer/lab-ca --timeout=300s
 
-echo "==> Istio $ISTIO_VERSION"
-istioctl install -y --set profile=default \
+echo "==> Istio $ISTIO_VERSION (ambient)"
+# The ambient profile does not include the ingress gateway; enable it
+# explicitly so the existing NodePort service is not pruned.
+istioctl install -y --set profile=ambient \
+  --set 'components.ingressGateways[0].enabled=true' \
+  --set 'components.ingressGateways[0].name=istio-ingressgateway' \
   --set values.gateways.istio-ingressgateway.type=NodePort
 
 kubectl -n istio-system patch svc istio-ingressgateway --type=strategic \
   -p '{"spec":{"type":"NodePort","ports":[{"port":80,"nodePort":30080},{"port":443,"nodePort":30443}]}}'
 kubectl -n istio-system rollout status deploy/istiod --timeout=300s
 kubectl -n istio-system rollout status deploy/istio-ingressgateway --timeout=300s
+kubectl -n istio-system rollout status ds/istio-cni-node --timeout=300s
+kubectl -n istio-system rollout status ds/ztunnel --timeout=300s
 
 echo "==> Demo workload and certificate"
 kubectl apply -f "$LAB_DIR/istio/demo-namespace.yaml"
+# Switching an existing sidecar namespace to ambient: remove the injection
+# label so the recreated pod has no istio-proxy container.
+kubectl label namespace demo istio-injection- --overwrite >/dev/null 2>&1 || true
 kubectl apply -f "$LAB_DIR/apps/whoami.yaml"
 kubectl apply -f "$LAB_DIR/cert-manager/demo-certificate.yaml"
 kubectl -n istio-system wait --for=condition=Ready certificate/demo-local --timeout=300s
@@ -138,7 +147,9 @@ kubectl -n istio-system wait --for=condition=Ready certificate/demo-local --time
 kubectl apply -f "$LAB_DIR/istio/gateway.yaml"
 kubectl apply -f "$LAB_DIR/istio/virtualservice.yaml"
 kubectl apply -f "$LAB_DIR/istio/peer-authentication.yaml"
+kubectl -n demo rollout restart deploy/whoami
 kubectl -n demo rollout status deploy/whoami --timeout=300s
+istioctl analyze -n demo
 
 echo "==> Host name and public CA certificate"
 if ! grep -qE '^[[:space:]]*10\.0\.0\.81[[:space:]]+demo\.local([[:space:]]|$)' /etc/hosts; then

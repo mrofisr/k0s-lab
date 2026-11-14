@@ -8,7 +8,7 @@ layers one at a time:
 - **Cilium** as the CNI, now replacing kube-proxy with its eBPF datapath.
 - **metrics-server** from k0s, verified with `kubectl top`.
 - **cert-manager** with a private CA and a `demo.local` certificate.
-- **Istio** in sidecar mode, exposed on NodePorts `30080`/`30443`.
+- **Istio** in ambient mode, exposed on NodePorts `30080`/`30443`.
 
 Caddy keeps host ports `80` and `443`. Nothing in this lab binds those ports.
 
@@ -21,8 +21,8 @@ Caddy keeps host ports `80` and `443`. Nothing in this lab binds those ports.
 | Cilium | `1.20.4` | Kubernetes IPAM, VXLAN, kube-proxy replacement active |
 | metrics-server | `v0.9.0-k0s.2` | Built into k0s |
 | cert-manager | `v1.21.3` | Self-signed bootstrap Issuer → private CA |
-| Istio | `1.32.0` | Default profile, sidecars, NodePort ingress |
-| Demo app | `traefik/whoami:v1.11.0` | Prints request headers, including XFCC |
+| Istio | `1.32.0` | Ambient profile, ztunnel, NodePort ingress |
+| Demo app | `traefik/whoami:v1.11.0` | Prints request headers and peer metadata |
 
 The versions are pinned deliberately. Cilium 1.20 is tested through Kubernetes
 1.36; k0s 1.37 is newer than that tested range. Istio 1.32 passed
@@ -36,8 +36,9 @@ The versions are pinned deliberately. Cilium 1.20 is tested through Kubernetes
   lower-risk start. Cilium now owns ClusterIP, NodePort, LoadBalancer, and
   HostPort service handling. `socketLB.hostNamespaceOnly=true` and
   `cni.exclusive=false` keep the datapath compatible with Istio.
-- **Istio sidecars first.** Sidecar injection makes mTLS, traffic shifting, and
-  ingress observable without ztunnel/ambient CNI chaining.
+- **Istio ambient now.** Phase 1 used sidecars for a predictable first install.
+  The demo namespace now runs without sidecars; ztunnel handles HBONE and mTLS,
+  while the ingress gateway remains a classic Envoy proxy.
 - **NodePort ingress.** `30080`/`30443` are deterministic and leave Caddy on
   `80`/`443` untouched.
 - **Private CA.** No public DNS or ACME dependency; cert-manager still exercises
@@ -57,12 +58,13 @@ k0s-lab/
 │   ├── ca-clusterissuer.yaml          # ClusterIssuer backed by the CA
 │   └── demo-certificate.yaml          # demo.local cert in istio-system
 ├── istio/
-│   ├── demo-namespace.yaml            # sidecar injection enabled
+│   ├── demo-namespace.yaml            # ambient data plane
 │   ├── gateway.yaml                   # HTTP + HTTPS gateways
 │   ├── virtualservice.yaml            # redirect + whoami route
 │   └── peer-authentication.yaml       # STRICT mTLS in demo
 ├── apps/whoami.yaml                   # demo Deployment + Service
 ├── docs/phase2-kube-proxy.md          # KPR migration + rollback
+├── docs/phase2-ambient.md             # ambient migration + rollback
 ├── scripts/
 │   ├── env.sh                         # PATH + KUBECONFIG for a new shell
 │   ├── install.sh                     # idempotent end-to-end bootstrap
@@ -96,7 +98,7 @@ source scripts/env.sh
 
 The script is idempotent. It installs the firewall unit, applies k0s, installs
 Cilium, waits for the node, installs cert-manager, creates the CA chain,
-installs Istio, patches the ingress NodePorts, deploys the demo, adds
+installs ambient Istio, patches the ingress NodePorts, deploys the demo, adds
 `demo.local` to `/etc/hosts`, and runs the smoke tests. On an upgrade from the
 phase-1 layout it removes kube-proxy and its iptables chains only after Cilium
 reports `KubeProxyReplacement: True`.
@@ -217,10 +219,16 @@ Issuer/lab-selfsigned (self-signed)
 The `demo-local` Certificate lives in `istio-system` because an Istio ingress
 gateway reads `credentialName` from its own namespace.
 
-### 6. Istio
+### 6. Istio ambient
+
+The ambient profile installs Istiod, the CNI node agent, and ztunnel, but it
+does **not** include an ingress gateway. Enable the gateway in the same overlay
+so the existing NodePort service is not pruned:
 
 ```sh
-istioctl install -y --set profile=default \
+istioctl install -y --set profile=ambient \
+  --set 'components.ingressGateways[0].enabled=true' \
+  --set 'components.ingressGateways[0].name=istio-ingressgateway' \
   --set values.gateways.istio-ingressgateway.type=NodePort
 
 kubectl -n istio-system patch svc istio-ingressgateway --type=strategic \
@@ -228,28 +236,36 @@ kubectl -n istio-system patch svc istio-ingressgateway --type=strategic \
 ```
 
 The patch preserves the default `status-port` and target ports, and pins only
-the HTTP/HTTPS NodePorts.
+the HTTP/HTTPS NodePorts. The CNI agent chains `istio-cni` after `cilium-cni` in
+`/etc/cni/net.d/05-cilium.conflist`; Cilium's `cni.exclusive=false` is what
+allows this. See [docs/phase2-ambient.md](docs/phase2-ambient.md) for the
+migration and rollback.
 
 ### 7. Demo
 
 ```sh
 kubectl apply -f istio/demo-namespace.yaml
+kubectl label namespace demo istio-injection- --overwrite 2>/dev/null || true
 kubectl apply -f apps/whoami.yaml
 kubectl apply -f cert-manager/demo-certificate.yaml
 kubectl apply -f istio/gateway.yaml
 kubectl apply -f istio/virtualservice.yaml
 kubectl apply -f istio/peer-authentication.yaml
+kubectl -n demo rollout restart deploy/whoami
+kubectl -n demo rollout status deploy/whoami --timeout=300s
 ```
 
-The namespace label `istio-injection=enabled` gives the whoami pod its
-`istio-proxy` sidecar. There are two Gateways:
+The namespace label `istio.io/dataplane-mode=ambient` puts whoami in ambient
+mode; the pod has no `istio-proxy` sidecar. If upgrading from sidecars, remove
+the old injection label and restart the deployment. There are two Gateways:
 
 - `demo-gateway-http` on port 80, used only by the redirect VirtualService.
 - `demo-gateway-https` on port 443, with `credentialName: demo-local-tls`.
 
 The redirect uses an explicit `authority: demo.local:30443`. Istio's built-in
 `httpsRedirect` copies the incoming Host header, which would produce the wrong
-port behind a NodePort.
+port behind a NodePort. The full ambient migration and rollback are in
+[docs/phase2-ambient.md](docs/phase2-ambient.md).
 
 Finally:
 
@@ -269,13 +285,15 @@ kubectl -n kube-system exec ds/cilium -- cilium-dbg status --brief
 kubectl -n kube-system exec ds/cilium -- cilium-dbg status | grep KubeProxyReplacement
 kubectl -n kube-system get ds kube-proxy
 istioctl proxy-status
+istioctl ztunnel-config workloads | grep whoami
 istioctl analyze -n demo
 ```
 
 Expected: the node is `Ready` with role `control-plane`; `top` returns CPU and
 memory; Cilium reports `OK` and `KubeProxyReplacement: True`; the kube-proxy
-DaemonSet is absent; both Istio proxies are listed without `STALE`/`NOT SENT`;
-analyze reports no validation issues.
+DaemonSet is absent; `istioctl proxy-status` lists the ingress gateway and
+ztunnel (there is no whoami sidecar); ztunnel reports `PROTOCOL HBONE` for
+whoami; analyze reports no validation issues.
 
 Ingress:
 
@@ -289,15 +307,19 @@ request returns `200` and whoami prints the request headers.
 
 ### mTLS proof
 
-`istio/peer-authentication.yaml` sets `STRICT` mTLS in the `demo` namespace.
-The whoami response includes:
+`istio/peer-authentication.yaml` sets `STRICT` mTLS in the `demo` namespace. In
+ambient mode the whoami pod has no sidecar, so there is no
+`X-Forwarded-Client-Cert` header. Inspect ztunnel instead:
 
-```text
-X-Forwarded-Client-Cert: By=spiffe://cluster.local/ns/demo/sa/default;...;URI=spiffe://cluster.local/ns/istio-system/sa/istio-ingressgateway-service-account
+```sh
+istioctl ztunnel-config workloads | grep whoami
+istioctl ztunnel-config connections
 ```
 
-That SPIFFE URI is the ingress gateway's identity. To see STRICT enforcement,
-run a pod without a sidecar and call whoami directly:
+The workload is `PROTOCOL HBONE`, and the connection table shows an inbound
+HBONE connection from `istio-ingressgateway` to whoami. That is the mTLS path.
+
+To see STRICT enforcement, run a non-ambient pod and call whoami directly:
 
 ```sh
 kubectl -n default run nettest --image=curlimages/curl:8.11.0 --restart=Never --command -- \
@@ -417,11 +439,10 @@ handling, and k0s kube-proxy is disabled and removed. The migration,
 verification, and rollback commands are in
 [docs/phase2-kube-proxy.md](docs/phase2-kube-proxy.md).
 
-**Phase 2b: Istio ambient mode — next.** Install the ambient profile, label a
-namespace with `istio.io/dataplane-mode=ambient`, and remove sidecar injection.
-The Cilium settings for ambient are already in place: `cni.exclusive=false` and
-`bpf.masquerade=false`. Review the Istio ambient Cilium notes about default-deny
-NetworkPolicies and kubelet health probes before switching the demo namespace.
+**Phase 2b: Istio ambient mode — complete.** The `demo` namespace runs without
+sidecars; ztunnel handles HBONE and mTLS while the ingress gateway stays a
+classic Envoy proxy. The migration, verification, and rollback commands are in
+[docs/phase2-ambient.md](docs/phase2-ambient.md).
 
 **Add a worker.** Add a second host to `config/k0sctl.yaml` with role
 `worker`, then re-apply. This is the point where Cilium routing, pod CIDR
@@ -442,8 +463,14 @@ Then browse `http://127.0.0.1:12000`.
   `/home` on the root filesystem, or k0s will not start at boot.
 - The CA private key stays in the cluster Secret
   `cert-manager/lab-ca-key-pair`. Only the public certificate is exported.
-- Cilium now replaces kube-proxy. Do not enable Istio ambient in the same
-  change; keep the layers separate so a failure is attributable.
+- Cilium replaces kube-proxy and the demo namespace runs in Istio ambient mode.
+  Keep one layer per change; switch a single namespace when testing sidecar vs
+  ambient.
+- The ambient profile omits the ingress gateway; the install overlay enables it
+  so the NodePort service is not pruned.
+- `/etc/cni/net.d/05-cilium.conflist` must list `cilium-cni` then `istio-cni`.
+  Cilium's `cni.exclusive=false` is what prevents Cilium from removing the
+  Istio plugin.
 - k0s leaves an existing kube-proxy DaemonSet in place when
   `kubeProxy.disabled` is switched on. The install script removes it only after
   Cilium reports `KubeProxyReplacement: True`.
