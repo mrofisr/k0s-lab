@@ -1,0 +1,20 @@
+# DNS-only *.cluster.jawara.cloud -> Caddy (Let's Encrypt wildcard) -> Istio
+#
+# The Cloudflare record must be DNS-only (grey cloud). Clients connect directly
+# to the origin, where Caddy terminates a publicly trusted Let's Encrypt
+# wildcard certificate. Cloudflare proxy/WAF is not in this path.
+#
+# Install as /etc/caddy/sites/cluster-wildcard.caddy, then:
+#   sudo caddy validate --config /etc/caddy/Caddyfile
+#   sudo caddy reload --config /etc/caddy/Caddyfile --force
+
+https://*.cluster.jawara.cloud {
+	tls /etc/caddy/certs/cluster-le.pem /etc/caddy/certs/cluster-le.key
+
+	reverse_proxy 10.0.0.81:30080 {
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
+	}
+
+	header -Server
+}

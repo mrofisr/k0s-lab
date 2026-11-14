@@ -10,7 +10,7 @@
 #
 # Install as /etc/caddy/sites/cluster-wildcard.caddy, then:
 #   sudo caddy validate --config /etc/caddy/Caddyfile
-#   sudo systemctl reload caddy
+#   sudo caddy reload --config /etc/caddy/Caddyfile --force
 
 https://*.cluster.jawara.cloud {
 	tls /etc/caddy/certs/cluster-origin.pem /etc/caddy/certs/cluster-origin.key

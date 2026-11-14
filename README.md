@@ -68,6 +68,7 @@ k0s-lab/
 ├── caddy/
 │   ├── cluster-wildcard-tunnel.caddy  # tunnel template
 │   ├── cluster-wildcard-origin-ca.caddy
+│   ├── cluster-wildcard-dns-only.caddy # selected DNS-only path
 │   └── README.md
 ├── apps/whoami.yaml                   # demo Deployment + Service
 ├── docs/phase2-kube-proxy.md          # KPR migration + rollback
@@ -81,6 +82,8 @@ k0s-lab/
 │   ├── env.sh                         # PATH + KUBECONFIG for a new shell
 │   ├── install.sh                     # idempotent lab bootstrap
 │   ├── install-skopos.sh              # Skopos + local-path install
+│   ├── install-cluster-cert.sh        # DNS-only wildcard + Caddy site
+│   ├── cluster-cert-deploy.sh         # certbot deploy/reload hook
 │   ├── teardown.sh                    # removes the lab
 │   └── firewall.sh                    # allows pod CIDR → host services
 ├── systemd/k0s-lab-firewall.service   # runs firewall.sh at boot
@@ -478,29 +481,46 @@ private ingress gateway. It is testable without DNS:
 curl -sS -H 'Host: whoami.cluster.jawara.cloud' http://10.0.0.81:30080/
 ```
 
-Caddy templates for the two Cloudflare paths are in `caddy/`:
+The live path is **DNS-only**:
 
-- **Cloudflare Tunnel** — Cloudflare terminates TLS and `cloudflared` connects
-  to Caddy on localhost. Most private; no Origin CA certificate. The edge
-  certificate requirement below still applies.
-- **Proxied DNS + Origin CA** — `*.cluster` A record proxied to the origin,
-  Cloudflare Full (strict), Caddy allows only Cloudflare edge IPs. Requires a
-  second-level edge certificate.
+```text
+*.cluster.jawara.cloud -> ns2.jawara.cloud -> 158.178.238.132
+Caddy: Let's Encrypt wildcard *.cluster.jawara.cloud
+Caddy -> 10.0.0.81:30080 -> Istio cluster-wildcard Gateway
+```
 
-Cloudflare currently has only Universal SSL (`jawara.cloud` and
-`*.jawara.cloud`). A forced TLS handshake for `whoami.cluster.jawara.cloud`
-fails at the edge with alert 40; `*.cluster` is a second-level wildcard. The
-wildcard DNS record is now live; the remaining blocker is the Cloudflare edge
-certificate. Enable Advanced Certificate Manager/Total TLS, or use a
-single-level hostname.
+Test:
+
+```sh
+curl -sS --resolve whoami.cluster.jawara.cloud:443:158.178.238.132 \
+  https://whoami.cluster.jawara.cloud/
+dig @1.1.1.1 whoami.cluster.jawara.cloud
+```
+
+Cloudflare’s Universal SSL only covers `jawara.cloud` and `*.jawara.cloud`; a
+proxied second-level `*.cluster` wildcard fails TLS with alert 40. Advanced
+Certificate Manager/Total TLS is paid, so this lab keeps `$0` by turning the
+proxy off for this wildcard and using a free Let’s Encrypt certificate at Caddy.
+
+Tradeoff: Cloudflare proxy/WAF is bypassed for `*.cluster`; clients reach the
+origin IP directly. The k0s API `6443` and NodePorts `30080`/`30443` remain
+closed to the internet; only Caddy `443` is exposed.
+
+Files and scripts:
+
+- `caddy/cluster-wildcard-dns-only.caddy`
+- `scripts/install-cluster-cert.sh`
+- `scripts/cluster-cert-deploy.sh`
+- `certbot.timer` renews the cert; the deploy hook copies it and reloads Caddy.
+
+On this host `systemctl reload caddy` fails with a systemd `PrivateTmp` error;
+use `sudo caddy reload --config /etc/caddy/Caddyfile --force`.
 
 The full design, DNS, TLS, and privacy notes are in
 [docs/cloudflare-wildcard.md](docs/cloudflare-wildcard.md).
 
-The cluster API `6443` and NodePorts `30080`/`30443` are not reachable from the
-public IP; Caddy `80`/`443` is the only public edge. A DNS wildcard covers one
-label only: `whoami.cluster.jawara.cloud` matches, `a.b.cluster.jawara.cloud`
-does not.
+A DNS wildcard covers one label only: `whoami.cluster.jawara.cloud` matches,
+`a.b.cluster.jawara.cloud` does not.
 
 ## Phase 2 progress
 

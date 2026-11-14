@@ -10,8 +10,11 @@ Istio ingress, without exposing the cluster API or NodePorts to the internet.
 | k0s node | `10.0.0.81` (RFC1918) |
 | Public origin | `158.178.238.132` |
 | `jawara.cloud` DNS | Cloudflare nameservers |
-| `*.cluster.jawara.cloud` | live at Cloudflare, proxied to the origin |
-| Cloudflare edge certificate | `jawara.cloud`, `*.jawara.cloud` only |
+| `*.cluster.jawara.cloud` | DNS-only CNAME → `ns2.jawara.cloud` → `158.178.238.132` |
+| Cloudflare proxy for this wildcard | disabled (DNS-only) |
+| Caddy certificate | Let's Encrypt wildcard, active |
+| Cert renewal | `certbot.timer` + `/usr/local/sbin/cluster-cert-deploy.sh` |
+| Cloudflare edge certificate | not used for this wildcard |
 | Local Oracle VCN resolver | `169.254.169.254`; caches negative answers |
 | Caddy | active on `*:80` and `*:443` |
 | k0s API `6443` from public IP | closed |
@@ -22,6 +25,50 @@ Istio ingress, without exposing the cluster API or NodePorts to the internet.
 The public-origin checks above used the host's public IP. Only Caddy `80`/`443`
 answered. The k0s API is additionally rejected by the host INPUT chain, and the
 Cilium NodePorts are reachable on the LAN but not from the public IP.
+
+## Selected $0 path: DNS-only + Let's Encrypt
+
+The chosen path is live:
+
+- Cloudflare record: `CNAME *.cluster → ns2.jawara.cloud`, proxy **off**.
+- `ns2.jawara.cloud` is an A record to `158.178.238.132`.
+- Caddy serves a Let's Encrypt ECDSA certificate:
+  ```text
+  CN=*.cluster.jawara.cloud
+  SAN: *.cluster.jawara.cloud, cluster.jawara.cloud
+  expires: 2027-02-12
+  ```
+- `caddy/cluster-wildcard-dns-only.caddy` proxies to `10.0.0.81:30080`.
+- `certbot.timer` renews the certificate; the deploy hook copies it to
+  `/etc/caddy/certs/cluster-le.{pem,key}` and reloads Caddy.
+
+Install/renew with:
+
+```sh
+cd "$HOME/Documents/projects/k0s-lab"
+./scripts/install-cluster-cert.sh
+```
+
+The Cloudflare API token is stored only at
+`/etc/letsencrypt/cloudflare.ini` (root, 0600). It needs:
+
+```text
+Zone -> DNS -> Edit
+Zone -> Zone -> Read
+```
+
+Tradeoff: Cloudflare proxy/WAF is bypassed for this wildcard; clients resolve
+the origin IP directly. The k0s API `6443` and NodePorts `30080`/`30443` remain
+closed to the internet; only Caddy `443` is exposed.
+
+On this host `systemctl reload caddy` fails with a systemd `PrivateTmp`
+namespace error. The deploy hook and install script use:
+
+```sh
+caddy reload --config /etc/caddy/Caddyfile --force
+```
+
+which reloads through Caddy's admin API and works.
 
 ## Critical Cloudflare edge certificate limit
 
@@ -44,6 +91,9 @@ SSL alert number 40
 This means a proxied `*.cluster.jawara.cloud` record cannot serve HTTPS clients
 until Cloudflare has an edge certificate for the second-level wildcard. An
 Origin CA certificate at Caddy does not fix the client-facing handshake.
+
+The selected DNS-only path above avoids this limit entirely: Cloudflare is used
+only for DNS, and Caddy terminates a publicly trusted wildcard certificate.
 
 The wildcard record is now live at Cloudflare and resolves to the proxy IPs
 from the authoritative nameservers. The remaining blocker is the edge
