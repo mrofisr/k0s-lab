@@ -1,0 +1,32 @@
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: demo-redirect
+  namespace: demo
+spec:
+  hosts:
+    - demo.local
+  gateways:
+    - demo-gateway-http
+  http:
+    - redirect:
+        scheme: https
+        authority: demo.local:30443
+        redirectCode: 301
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: whoami
+  namespace: demo
+spec:
+  hosts:
+    - demo.local
+  gateways:
+    - demo-gateway-https
+  http:
+    - route:
+        - destination:
+            host: whoami.demo.svc.cluster.local
+            port:
+              number: 80

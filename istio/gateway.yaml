@@ -1,0 +1,34 @@
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: demo-gateway-http
+  namespace: demo
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - demo.local
+---
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: demo-gateway-https
+  namespace: demo
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    - port:
+        number: 443
+        name: https
+        protocol: HTTPS
+      hosts:
+        - demo.local
+      tls:
+        mode: SIMPLE
+        credentialName: demo-local-tls

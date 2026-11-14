@@ -1,0 +1,27 @@
+# Cilium phase 1: CNI only, kube-proxy retained.
+# Phase 2 replaces kube-proxy and adds Istio ambient settings.
+cluster:
+  name: k0s-lab
+  id: 1
+
+ipam:
+  mode: kubernetes
+
+kubeProxyReplacement: "false"
+k8sServiceHost: 10.0.0.81
+k8sServicePort: 6443
+
+# The host NIC reports MTU 9000, but the lab clients are on 1500.
+# Pin the overlay to a safe value instead of auto-detecting jumbo frames.
+# The Cilium chart key is uppercase MTU.
+MTU: 1500
+
+operator:
+  replicas: 1
+
+hubble:
+  enabled: true
+  relay:
+    enabled: true
+  ui:
+    enabled: true
