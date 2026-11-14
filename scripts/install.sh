@@ -51,12 +51,55 @@ fi
 echo "==> Cilium $CILIUM_VERSION"
 helm repo add cilium https://helm.cilium.io/ >/dev/null 2>&1 || true
 helm repo update cilium >/dev/null
+
+had_kube_proxy=false
+if kubectl -n kube-system get ds kube-proxy >/dev/null 2>&1; then
+  had_kube_proxy=true
+fi
+
 helm upgrade --install cilium cilium/cilium --version "$CILIUM_VERSION" \
   --namespace kube-system -f "$LAB_DIR/cilium/values.yaml" \
   --wait --timeout 10m
 
 kubectl wait --for=condition=Ready node --all --timeout=300s
 kubectl -n kube-system rollout status ds/cilium --timeout=300s
+
+# The agent reads kubeProxyReplacement at startup. On an upgrade from
+# kube-proxy mode the ConfigMap changes but the DaemonSet does not roll
+# automatically, so restart it once and wait for KPR to become active.
+if ! kubectl -n kube-system exec ds/cilium -- cilium-dbg status 2>/dev/null \
+    | grep -q 'KubeProxyReplacement:.*True'; then
+  kubectl -n kube-system rollout restart ds/cilium
+  kubectl -n kube-system rollout status ds/cilium --timeout=300s
+fi
+
+kpr_ready=false
+for _ in $(seq 1 60); do
+  if kubectl -n kube-system exec ds/cilium -- cilium-dbg status 2>/dev/null \
+      | grep -q 'KubeProxyReplacement:.*True'; then
+    kpr_ready=true
+    break
+  fi
+  sleep 2
+done
+if [ "$kpr_ready" != true ]; then
+  echo "Cilium kube-proxy replacement did not become active" >&2
+  exit 1
+fi
+
+# k0s leaves an existing kube-proxy DaemonSet in place when the config is
+# switched to disabled. Remove it and its iptables chains only after KPR is
+# verified, so service routing never has a gap.
+if [ "$had_kube_proxy" = true ] || sudo iptables-save | grep -q 'KUBE-SVC'; then
+  kubectl -n kube-system delete ds kube-proxy --ignore-not-found
+  kubectl -n kube-system delete cm kube-proxy --ignore-not-found
+  kubectl -n kube-system wait --for=delete pod -l k8s-app=kube-proxy --timeout=120s || true
+
+  mkdir -p "$LAB_DIR/backups"
+  sudo iptables-save > "$LAB_DIR/backups/iptables-before-kube-proxy-cleanup-$(date +%Y%m%d-%H%M%S).txt"
+  sudo sh -c 'iptables-save | grep -v KUBE | iptables-restore'
+fi
+
 kubectl -n kube-system rollout status deploy/coredns --timeout=300s
 kubectl -n kube-system rollout status deploy/metrics-server --timeout=300s
 

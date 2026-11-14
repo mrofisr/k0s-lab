@@ -5,7 +5,7 @@ A reproducible single-node Kubernetes lab on this Ubuntu 24.04 arm64 host
 layers one at a time:
 
 - **k0s** as the Kubernetes distribution.
-- **Cilium** as the CNI, with kube-proxy retained for phase 1.
+- **Cilium** as the CNI, now replacing kube-proxy with its eBPF datapath.
 - **metrics-server** from k0s, verified with `kubectl top`.
 - **cert-manager** with a private CA and a `demo.local` certificate.
 - **Istio** in sidecar mode, exposed on NodePorts `30080`/`30443`.
@@ -18,7 +18,7 @@ Caddy keeps host ports `80` and `443`. Nothing in this lab binds those ports.
 | --- | --- | --- |
 | k0s | `v1.36.6+k0s.0` | Single controller+worker, no taints |
 | k0sctl | `v0.33.1` | Installs k0s over SSH |
-| Cilium | `1.20.4` | Kubernetes IPAM, VXLAN, kube-proxy retained |
+| Cilium | `1.20.4` | Kubernetes IPAM, VXLAN, kube-proxy replacement active |
 | metrics-server | `v0.9.0-k0s.2` | Built into k0s |
 | cert-manager | `v1.21.3` | Self-signed bootstrap Issuer → private CA |
 | Istio | `1.32.0` | Default profile, sidecars, NodePort ingress |
@@ -32,9 +32,10 @@ The versions are pinned deliberately. Cilium 1.20 is tested through Kubernetes
 
 - **Single node first.** Multi-node adds Cilium routing, etcd quorum, and
   scheduling variables before the core stack is understood. Add workers later.
-- **Cilium with kube-proxy retained.** This is the lower-risk phase-1 CNI
-  configuration and keeps service handling familiar. Replacing kube-proxy is a
-  phase-2 exercise.
+- **Cilium phase 2 replaces kube-proxy.** Phase 1 kept kube-proxy for a
+  lower-risk start. Cilium now owns ClusterIP, NodePort, LoadBalancer, and
+  HostPort service handling. `socketLB.hostNamespaceOnly=true` and
+  `cni.exclusive=false` keep the datapath compatible with Istio.
 - **Istio sidecars first.** Sidecar injection makes mTLS, traffic shifting, and
   ingress observable without ztunnel/ambient CNI chaining.
 - **NodePort ingress.** `30080`/`30443` are deterministic and leave Caddy on
@@ -49,7 +50,7 @@ The versions are pinned deliberately. Cilium 1.20 is tested through Kubernetes
 ```text
 k0s-lab/
 ├── config/k0sctl.yaml                 # k0s cluster definition
-├── cilium/values.yaml                 # Cilium phase-1 values
+├── cilium/values.yaml                 # Cilium KPR values
 ├── cert-manager/
 │   ├── selfsigned-issuer.yaml         # bootstrap Issuer
 │   ├── ca-certificate.yaml            # 10-year private CA
@@ -61,6 +62,7 @@ k0s-lab/
 │   ├── virtualservice.yaml            # redirect + whoami route
 │   └── peer-authentication.yaml       # STRICT mTLS in demo
 ├── apps/whoami.yaml                   # demo Deployment + Service
+├── docs/phase2-kube-proxy.md          # KPR migration + rollback
 ├── scripts/
 │   ├── env.sh                         # PATH + KUBECONFIG for a new shell
 │   ├── install.sh                     # idempotent end-to-end bootstrap
@@ -95,7 +97,9 @@ source scripts/env.sh
 The script is idempotent. It installs the firewall unit, applies k0s, installs
 Cilium, waits for the node, installs cert-manager, creates the CA chain,
 installs Istio, patches the ingress NodePorts, deploys the demo, adds
-`demo.local` to `/etc/hosts`, and runs the smoke tests.
+`demo.local` to `/etc/hosts`, and runs the smoke tests. On an upgrade from the
+phase-1 layout it removes kube-proxy and its iptables chains only after Cilium
+reports `KubeProxyReplacement: True`.
 
 On a fresh install the script also seeds `~/.kube/config` when it has no
 contexts, so a plain `kubectl get nodes` works. If you already use
@@ -146,17 +150,29 @@ helm upgrade --install cilium cilium/cilium --version 1.20.4 \
 Key values:
 
 - `ipam.mode=kubernetes` — Cilium uses the node's `podCIDR` (`10.244.0.0/24`).
-- `kubeProxyReplacement=false` — kube-proxy still owns service DNAT.
+- `kubeProxyReplacement=true` — Cilium's eBPF datapath owns service handling.
+- `k8sServiceHost=10.0.0.81` / `k8sServicePort=6443` — direct API path once
+  kube-proxy is gone.
+- `socketLB.hostNamespaceOnly=true` — keeps socket load balancing out of pod
+  namespaces so Istio redirection still sees the original ClusterIP.
+- `cni.exclusive=false` — allows the Istio CNI plugin to chain with Cilium.
+- `bpf.masquerade=false` — required for Istio ambient; iptables masquerading
+  remains in use.
 - `MTU=1500` — the host NIC reports MTU 9000, but lab clients use 1500.
   The Cilium chart key is uppercase; lowercase `mtu` is silently ignored.
 - `operator.replicas=1` — a single-node lab does not need two operators.
 - Hubble relay and UI are enabled for flow observation.
+
+Phase 1 kept kube-proxy. The migration, verification, and rollback steps are in
+[docs/phase2-kube-proxy.md](docs/phase2-kube-proxy.md).
 
 Verify:
 
 ```sh
 kubectl get nodes
 kubectl -n kube-system exec ds/cilium -- cilium-dbg status --brief
+kubectl -n kube-system exec ds/cilium -- cilium-dbg status | grep KubeProxyReplacement
+kubectl -n kube-system exec ds/cilium -- cilium-dbg service list | grep -E '10.96.0.1|30080|30443'
 ```
 
 ### 4. metrics-server
@@ -250,13 +266,16 @@ kubectl get nodes -o wide
 kubectl top nodes
 kubectl top pods -A
 kubectl -n kube-system exec ds/cilium -- cilium-dbg status --brief
+kubectl -n kube-system exec ds/cilium -- cilium-dbg status | grep KubeProxyReplacement
+kubectl -n kube-system get ds kube-proxy
 istioctl proxy-status
 istioctl analyze -n demo
 ```
 
 Expected: the node is `Ready` with role `control-plane`; `top` returns CPU and
-memory; Cilium reports `OK`; both Istio proxies are listed without
-`STALE`/`NOT SENT`; analyze reports no validation issues.
+memory; Cilium reports `OK` and `KubeProxyReplacement: True`; the kube-proxy
+DaemonSet is absent; both Istio proxies are listed without `STALE`/`NOT SENT`;
+analyze reports no validation issues.
 
 Ingress:
 
@@ -391,23 +410,18 @@ kubectl delete -f apps/whoami.yaml
 kubectl delete -f istio/demo-namespace.yaml
 ```
 
-## Phase 2 ideas
+## Phase 2 progress
 
-**Replace kube-proxy with Cilium.** Set `spec.network.kubeProxy.disabled: true`
-in `config/k0sctl.yaml`, re-apply, and change the Cilium values to
-`kubeProxyReplacement: "true"`, `socketLB.hostNamespaceOnly: "true"`, and
-`k8sServiceHost`/`k8sServicePort`. Verify with:
+**Phase 2a: Cilium kube-proxy replacement — complete.** Cilium now owns service
+handling, and k0s kube-proxy is disabled and removed. The migration,
+verification, and rollback commands are in
+[docs/phase2-kube-proxy.md](docs/phase2-kube-proxy.md).
 
-```sh
-kubectl -n kube-system exec ds/cilium -- cilium-dbg status | grep KubeProxyReplacement
-```
-
-**Try Istio ambient mode.** Install the ambient profile, label a namespace with
-`istio.io/dataplane-mode=ambient`, and remove sidecar injection. With Cilium
-underneath, set `cni.exclusive=false` to allow CNI chaining, keep Cilium's
-iptables masquerading (do not enable `bpf.masquerade` for ambient), and review
-the Istio ambient Cilium notes about default-deny NetworkPolicies and kubelet
-health probes.
+**Phase 2b: Istio ambient mode — next.** Install the ambient profile, label a
+namespace with `istio.io/dataplane-mode=ambient`, and remove sidecar injection.
+The Cilium settings for ambient are already in place: `cni.exclusive=false` and
+`bpf.masquerade=false`. Review the Istio ambient Cilium notes about default-deny
+NetworkPolicies and kubelet health probes before switching the demo namespace.
 
 **Add a worker.** Add a second host to `config/k0sctl.yaml` with role
 `worker`, then re-apply. This is the point where Cilium routing, pod CIDR
@@ -428,8 +442,11 @@ Then browse `http://127.0.0.1:12000`.
   `/home` on the root filesystem, or k0s will not start at boot.
 - The CA private key stays in the cluster Secret
   `cert-manager/lab-ca-key-pair`. Only the public certificate is exported.
-- Cilium phase 1 keeps kube-proxy. Do not enable kube-proxy replacement and
-  Istio ambient in the same change; change one layer at a time.
+- Cilium now replaces kube-proxy. Do not enable Istio ambient in the same
+  change; keep the layers separate so a failure is attributable.
+- k0s leaves an existing kube-proxy DaemonSet in place when
+  `kubeProxy.disabled` is switched on. The install script removes it only after
+  Cilium reports `KubeProxyReplacement: True`.
 - The host NIC reports MTU 9000. Cilium is pinned to 1500 so clients on the
   local LAN do not depend on end-to-end jumbo-frame support.
 - This lab is separate from the Skopos repository. Installing Skopos on top is
