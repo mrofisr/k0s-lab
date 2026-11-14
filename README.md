@@ -98,7 +98,7 @@ The host already has `export PATH="$HOME/.local/bin:$PATH"` in `~/.bashrc` and
 ## Quick start
 
 ```sh
-cd "$HOME/k0s-lab"
+cd "$HOME/Documents/projects/k0s-lab"
 source scripts/env.sh
 ./scripts/install.sh
 ```
@@ -116,7 +116,7 @@ contexts, so a plain `kubectl get nodes` works. If you already use
 context explicitly:
 
 ```sh
-source "$HOME/k0s-lab/scripts/env.sh"
+source "$HOME/Documents/projects/k0s-lab/scripts/env.sh"
 ```
 
 ## What each phase does
@@ -404,7 +404,7 @@ VM, also check the VCN security list; the host firewall is not the only layer.
 No usable kubeconfig was found. Select the lab context:
 
 ```sh
-source "$HOME/k0s-lab/scripts/env.sh"
+source "$HOME/Documents/projects/k0s-lab/scripts/env.sh"
 # or:
 export KUBECONFIG="$HOME/.kube/k0s-lab.conf"
 ```

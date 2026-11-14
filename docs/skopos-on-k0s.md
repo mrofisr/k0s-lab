@@ -24,7 +24,7 @@ no built-in StorageClass, so the lab uses Rancher's local-path provisioner
 ## Install
 
 ```sh
-cd "$HOME/k0s-lab"
+cd "$HOME/Documents/projects/k0s-lab"
 source scripts/env.sh
 ./scripts/install-skopos.sh
 ```

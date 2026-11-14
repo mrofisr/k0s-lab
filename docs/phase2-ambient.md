@@ -26,7 +26,7 @@ Envoy proxy so the existing NodePort and `demo.local` certificate keep working.
 - Snapshot the sidecar state first:
 
 ```sh
-cd "$HOME/k0s-lab"
+cd "$HOME/Documents/projects/k0s-lab"
 mkdir -p backups/istio-before-ambient
 kubectl -n istio-system get all,cm,sa -o yaml > backups/istio-before-ambient/istio-system-resources.yaml
 kubectl get gateway,virtualservice,peerauthentication -A -o yaml > backups/istio-before-ambient/istio-cr.yaml

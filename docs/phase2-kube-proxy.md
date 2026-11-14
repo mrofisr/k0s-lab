@@ -21,7 +21,7 @@ removed.
 Snapshot the state so you can roll back:
 
 ```sh
-cd "$HOME/k0s-lab"
+cd "$HOME/Documents/projects/k0s-lab"
 mkdir -p backups
 helm get values cilium -n kube-system -o yaml > backups/cilium-values-before-kpr.yaml
 kubectl -n kube-system get ds kube-proxy -o yaml > backups/kube-proxy-ds.yaml

@@ -1,13 +1,13 @@
 [Unit]
 Description=Allow the k0s pod CIDR to reach host services
-Documentation=file:/home/ubuntu/k0s-lab/README.md
+Documentation=file:/home/ubuntu/Documents/projects/k0s-lab/README.md
 After=network-online.target cloud-final.service firewalld.service ufw.service
 Wants=network-online.target
 Before=k0scontroller.service
 
 [Service]
 Type=oneshot
-ExecStart=/home/ubuntu/k0s-lab/scripts/firewall.sh
+ExecStart=/home/ubuntu/Documents/projects/k0s-lab/scripts/firewall.sh
 RemainAfterExit=yes
 
 [Install]
