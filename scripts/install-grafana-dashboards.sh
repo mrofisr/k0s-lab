@@ -39,10 +39,8 @@ sudo install -m 0640 -o root -g grafana \
 
 echo "==> Installing Skopos dashboards"
 sudo install -d -o root -g grafana -m 0755 /var/lib/grafana/dashboards/skopos
-sudo install -m 0640 -o root -g grafana \
-  "$LAB_DIR/grafana/dashboards/skopos-overview.json" \
-  "$LAB_DIR/grafana/dashboards/obi-red.json" \
-  /var/lib/grafana/dashboards/skopos/
+sudo install -m 0640 -o root -g grafana -t /var/lib/grafana/dashboards/skopos \
+  "$LAB_DIR"/grafana/dashboards/*.json
 
 if [ -f /etc/alloy/config.alloy ] && command -v alloy >/dev/null 2>&1; then
   if ! sudo grep -q 'prometheus.scrape "skopos_gateway"' /etc/alloy/config.alloy; then
@@ -84,7 +82,7 @@ if command -v sqlite3 >/dev/null 2>&1; then
     "select name, type, url from data_source where uid like 'skopos-%';"
   echo "==> Grafana dashboards"
   sudo sqlite3 /var/lib/grafana/grafana.db \
-    "select name from resource where \"group\"='dashboard.grafana.app' and name in ('skopos-overview','obi-red');"
+    "select name from resource where \"group\"='dashboard.grafana.app' and name in ('skopos-overview','obi-red','skopos-tempo-dashboard');"
   echo "==> Gateway metrics in Mimir"
   curl -sS 'http://127.0.0.1:9009/prometheus/api/v1/query?query=skopos_build_info' \
     | jq -r '.data.result[]? | "\(.metric.__name__){job=\(.metric.job)}"' 2>/dev/null || true

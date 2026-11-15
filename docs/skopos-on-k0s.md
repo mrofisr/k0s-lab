@@ -138,6 +138,16 @@ Then **Dashboards → Skopos**:
 
 - **Skopos Overview** — gateway self-metrics (`skopos_*`) from Mimir.
 - **OBI RED** — HTTP RED metrics from the `Skopos Prometheus` datasource.
+- **Skopos Tempo** — TraceQL trace tables from the `Skopos Tempo` datasource.
+
+The Tempo dashboard queries `{}` and `{ service.name = "whoami" }`, which the
+gateway supports. The bundled table links open the trace in Explore.
+
+Direct link:
+
+```text
+https://monitoring.jawara.cloud/d/skopos-tempo-dashboard
+```
 
 Useful Explore queries:
 

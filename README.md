@@ -482,8 +482,8 @@ Visualize in the existing host Grafana:
 ```
 
 This adds `Skopos Prometheus` and `Skopos Tempo` datasources, imports the
-**Skopos Overview** and **OBI RED** dashboards, and scrapes the gateway
-self-metrics into Mimir through Alloy.
+**Skopos Overview**, **OBI RED**, and **Skopos Tempo** dashboards, and scrapes
+the gateway self-metrics into Mimir through Alloy.
 
 ```text
 https://monitoring.jawara.cloud
