@@ -1,0 +1,9 @@
+// Skopos gateway self-metrics (k0s lab)
+// The installer replaces __ADDRESS__ with the current ClusterIP:8080.
+prometheus.scrape "skopos_gateway" {
+        targets = [{
+                job         = "skopos-gateway",
+                __address__ = "__ADDRESS__",
+        }]
+        forward_to = [prometheus.remote_write.local.receiver]
+}

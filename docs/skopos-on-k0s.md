@@ -96,6 +96,87 @@ kubectl -n observability exec skopos-clickhouse-0 -- \
 The first run produced thousands of traces for `istio` and `whoami`, plus HTTP
 histograms for request duration and body size.
 
+## Visualize in Grafana
+
+The host already runs Grafana 13.3.1, Mimir, Loki, and Alloy. Skopos is added as
+a datasource; there is no second Grafana.
+
+Provision:
+
+```sh
+cd "$HOME/Documents/projects/k0s-lab"
+./scripts/install-grafana-dashboards.sh
+```
+
+The script:
+
+1. discovers the Skopos gateway ClusterIP;
+2. installs `Skopos Prometheus` and `Skopos Tempo` datasources;
+3. copies the two Skopos dashboards into the Grafana `Skopos` folder;
+4. adds an Alloy scrape for the gateway `/metrics` into Mimir;
+5. restarts Grafana.
+
+### Datasources
+
+| Name | Type | Data |
+| --- | --- | --- |
+| `Skopos Prometheus` | Prometheus | OTel metrics in ClickHouse via the gateway |
+| `Skopos Tempo` | Tempo | trace search and trace fetch via the gateway |
+| `Mimir` | Prometheus | gateway self-metrics scraped by Alloy, plus existing host metrics |
+| `Loki` | Loki | existing host/systemd/Docker logs |
+
+### Dashboards
+
+Open:
+
+```text
+https://monitoring.jawara.cloud
+# or http://127.0.0.1:3001
+```
+
+Then **Dashboards → Skopos**:
+
+- **Skopos Overview** — gateway self-metrics (`skopos_*`) from Mimir.
+- **OBI RED** — HTTP RED metrics from the `Skopos Prometheus` datasource.
+
+Useful Explore queries:
+
+```promql
+# Skopos Prometheus
+target_info
+http_server_request_duration_count
+sum by (service_name) (rate(http_server_request_duration_count[5m]))
+
+# Mimir
+skopos_http_requests_total
+skopos_http_in_flight
+skopos_clickhouse_query_duration_seconds_bucket
+```
+
+For traces: **Explore → Skopos Tempo → Search**, tag query
+`service.name=whoami`.
+
+### Notes
+
+- The bundled OBI RED dashboard uses `_seconds` metric names, but the gateway
+  exposes `http_server_request_duration_*` and
+  `http_client_request_duration_*`. The lab copy is patched to the gateway
+  names.
+- `Skopos Overview` uses Mimir because `skopos_*` are gateway self-metrics;
+  Alloy scrapes `http://<gateway-clusterip>:8080/metrics` and remote-writes to
+  Mimir. If the service is recreated with a new ClusterIP, update the Alloy
+  target and rerun the datasource install.
+- Grafana 13 stores dashboards through its newer dashboard API. The legacy
+  SQLite `dashboard` table is empty even though the dashboards are present; the
+  `resource` table and the UI show them.
+- `Skopos Tempo` may show an advisory health status because the gateway does
+  not implement Tempo's `/api/status`; search and trace fetch use
+  `/api/search` and `/api/traces`.
+- Mimir and Loki are otherwise unchanged. Skopos OTel metrics stay in
+  ClickHouse; only gateway self-metrics are duplicated into Mimir. OBI is not
+  currently shipping logs, so the Skopos Loki API is empty; use the existing
+  Loki datasource for host logs.
+
 ## OBI findings on k0s
 
 OBI is running and producing traces and metrics, but its log shows several

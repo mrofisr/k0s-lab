@@ -78,10 +78,16 @@ k0s-lab/
 ├── skopos/
 │   ├── values.release.yaml            # pinned gateway digest
 │   └── values.k0s.yaml                # local-path storage overlay
+├── grafana/
+│   ├── skopos-datasource.yaml         # Skopos Prometheus + Tempo
+│   ├── skopos-dashboards.yaml         # dashboard provider
+│   ├── alloy-skopos-scrape.alloy      # gateway self-metrics -> Mimir
+│   └── dashboards/*.json              # Skopos Overview + OBI RED
 ├── scripts/
 │   ├── env.sh                         # PATH + KUBECONFIG for a new shell
 │   ├── install.sh                     # idempotent lab bootstrap
 │   ├── install-skopos.sh              # Skopos + local-path install
+│   ├── install-grafana-dashboards.sh  # Grafana + Alloy integration
 │   ├── install-cluster-cert.sh        # DNS-only wildcard + Caddy site
 │   ├── cluster-cert-deploy.sh         # certbot deploy/reload hook
 │   ├── teardown.sh                    # removes the lab
@@ -469,8 +475,23 @@ curl -sS http://127.0.0.1:8080/readyz
 curl -sS 'http://127.0.0.1:8080/api/v1/query?query=target_info'
 ```
 
-See [docs/skopos-on-k0s.md](docs/skopos-on-k0s.md) for the install, the OBI
-capability findings, the k3d comparison, and uninstall.
+Visualize in the existing host Grafana:
+
+```sh
+./scripts/install-grafana-dashboards.sh
+```
+
+This adds `Skopos Prometheus` and `Skopos Tempo` datasources, imports the
+**Skopos Overview** and **OBI RED** dashboards, and scrapes the gateway
+self-metrics into Mimir through Alloy.
+
+```text
+https://monitoring.jawara.cloud
+Dashboards -> Skopos
+```
+
+See [docs/skopos-on-k0s.md](docs/skopos-on-k0s.md) for the install, Grafana
+details, the OBI capability findings, the k3d comparison, and uninstall.
 
 ## Cloudflare wildcard
 

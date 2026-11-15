@@ -1,0 +1,22 @@
+apiVersion: 1
+
+datasources:
+  - name: Skopos Prometheus
+    uid: skopos-prometheus
+    type: prometheus
+    access: proxy
+    url: __SKOPOS_GATEWAY_URL__
+    isDefault: false
+    editable: true
+    jsonData:
+      httpMethod: GET
+      timeInterval: 30s
+
+  - name: Skopos Tempo
+    uid: skopos-tempo
+    type: tempo
+    access: proxy
+    url: __SKOPOS_GATEWAY_URL__
+    editable: true
+    jsonData:
+      httpMethod: GET
